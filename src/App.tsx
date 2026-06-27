@@ -291,7 +291,7 @@ export default function App() {
 
       // Log it to backend autonomous logs
       try {
-        const response = await fetch("/api/pomodoro/log", {
+        const response = await fetchWithAuth("/api/pomodoro/log", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -389,9 +389,105 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const fetchData = async () => {
+  const [token, setToken] = useState<string | null>(localStorage.getItem("dg_token"));
+  const [user, setUser] = useState<{ id: string; username: string } | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
+    const authHeaders = {
+      ...options.headers,
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": options.headers && (options.headers as any)["Content-Type"] ? (options.headers as any)["Content-Type"] : "application/json"
+    };
+    
+    // For GET or simple requests, remove Content-Type if body is not present to avoid browser warnings
+    if (!options.body && authHeaders["Content-Type"] === "application/json") {
+      delete (authHeaders as any)["Content-Type"];
+    }
+
+    const res = await fetch(url, {
+      ...options,
+      headers: authHeaders
+    });
+    
+    if (res.status === 401) {
+      handleLogout();
+      throw new Error("Unauthorized");
+    }
+    
+    return res;
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("dg_token");
+    setToken(null);
+    setUser(null);
+    setDb({
+      tasks: [],
+      schedule_blocks: [],
+      calendar_events: [],
+      goals: [],
+      habits: [],
+      patterns: [],
+      conversations: [],
+      autonomous_logs: []
+    });
+    addToast("Logged Out", "You have been securely logged out of your session.", "info");
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authUsername.trim() || !authPassword.trim()) {
+      setAuthError("Please fill out all fields.");
+      return;
+    }
+
     try {
-      const res = await fetch("/api/data");
+      setAuthLoading(true);
+      setAuthError(null);
+
+      const endpoint = authMode === 'login' ? "/api/auth/login" : "/api/auth/register";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: authUsername.trim(),
+          password: authPassword.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication failed.");
+      }
+
+      localStorage.setItem("dg_token", data.token);
+      setToken(data.token);
+      setUser(data.user);
+      setAuthUsername("");
+      setAuthPassword("");
+      addToast(
+        authMode === 'login' ? "Welcome Back!" : "Account Registered!",
+        authMode === 'login' 
+          ? `Authenticated successfully as ${data.user.username}.`
+          : `Your DeadlineGuardian secure workspace has been provisioned!`,
+        "success"
+      );
+    } catch (err: any) {
+      setAuthError(err.message || "An unexpected error occurred.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const fetchData = async () => {
+    if (!token) return;
+    try {
+      const res = await fetchWithAuth("/api/data");
       const data = await res.json();
       setDb(data);
       setIsGeminiConfigured(data.isGeminiConfigured);
@@ -402,11 +498,39 @@ export default function App() {
     }
   };
 
+  // Authenticated profile verification effect
+  useEffect(() => {
+    if (token) {
+      fetch("/api/auth/me", {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+      .then(res => {
+        if (res.status === 401) {
+          handleLogout();
+          return null;
+        }
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.success) {
+          setUser(data.user);
+          fetchData();
+        }
+      })
+      .catch(err => {
+        console.error("Auth validation failed", err);
+        handleLogout();
+      });
+    } else {
+      setLoading(false);
+    }
+  }, [token]);
+
   const handleResetData = async () => {
     if (!window.confirm("Are you sure you want to reset all data back to clean factory seed defaults?")) return;
     try {
       setLoading(true);
-      const res = await fetch("/api/data/reset", { method: "POST" });
+      const res = await fetchWithAuth("/api/data/reset", { method: "POST" });
       const data = await res.json();
       if (data.success) {
         setDb(data.state);
@@ -429,7 +553,7 @@ export default function App() {
       const d = new Date();
       d.setMinutes(d.getMinutes() + parseFloat(newTaskHoursOffset) * 60);
 
-      const response = await fetch("/api/tasks", {
+      const response = await fetchWithAuth("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -462,7 +586,7 @@ export default function App() {
 
   const handleUpdateTaskStatus = async (taskId: string, status: Task['status']) => {
     try {
-      const response = await fetch(`/api/tasks/${taskId}`, {
+      const response = await fetchWithAuth(`/api/tasks/${taskId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status })
@@ -476,7 +600,7 @@ export default function App() {
 
   const handleUpdateSubtasks = async (taskId: string, subtasks: SubTask[]) => {
     try {
-      const response = await fetch(`/api/tasks/${taskId}`, {
+      const response = await fetchWithAuth(`/api/tasks/${taskId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subtasks })
@@ -491,7 +615,7 @@ export default function App() {
   const handleDeleteTask = async (taskId: string) => {
     if (!window.confirm("Are you sure you want to delete this task?")) return;
     try {
-      const res = await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+      const res = await fetchWithAuth(`/api/tasks/${taskId}`, { method: "DELETE" });
       if (res.ok) {
         await fetchData();
       }
@@ -517,7 +641,7 @@ export default function App() {
       updatedIds.splice(toIndex, 0, draggedTaskId);
 
       try {
-        const res = await fetch("/api/tasks/reorder", {
+        const res = await fetchWithAuth("/api/tasks/reorder", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderedIds: updatedIds })
@@ -547,7 +671,7 @@ export default function App() {
   const handleTriggerSubtaskGen = async (taskId: string) => {
     try {
       setGeneratingSubtasksId(taskId);
-      const res = await fetch(`/api/tasks/${taskId}/subtasks`, { method: "POST" });
+      const res = await fetchWithAuth(`/api/tasks/${taskId}/subtasks`, { method: "POST" });
       if (!res.ok) {
         const errData = await res.json();
         throw new Error(errData.error || "Failed subtask breakdown");
@@ -563,7 +687,7 @@ export default function App() {
   const handleAutoPlanDay = async () => {
     try {
       setAutoPlanning(true);
-      const res = await fetch("/api/schedule/auto-plan", { method: "POST" });
+      const res = await fetchWithAuth("/api/schedule/auto-plan", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
         await fetchData();
@@ -584,7 +708,7 @@ export default function App() {
   const handleTriggerAutonomousTick = async () => {
     try {
       setRunningAutonomousTick(true);
-      const res = await fetch("/api/agent/autonomous-tick", { method: "POST" });
+      const res = await fetchWithAuth("/api/agent/autonomous-tick", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
         await fetchData();
@@ -603,7 +727,7 @@ export default function App() {
   const handleTriggerPatternAnalysis = async () => {
     try {
       setAnalyzingPatterns(true);
-      const res = await fetch("/api/patterns/analyze", { method: "POST" });
+      const res = await fetchWithAuth("/api/patterns/analyze", { method: "POST" });
       if (res.ok) {
         await fetchData();
       }
@@ -635,7 +759,7 @@ export default function App() {
         conversations: [...prev.conversations, tempUserMsg]
       }));
 
-      const res = await fetch("/api/agent/chat", {
+      const res = await fetchWithAuth("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: messageToSend })
@@ -659,7 +783,7 @@ export default function App() {
   };
 
   // Add dummy calendar event to trigger responsive calendar updates
-  const handleAddCalendarEvent = () => {
+  const handleAddCalendarEvent = async () => {
     const title = prompt("Enter Calendar Event Name:", "Product Launch Webinar");
     if (!title) return;
     const hoursOffset = prompt("Hours offset from now:", "5");
@@ -669,78 +793,87 @@ export default function App() {
     dStart.setMinutes(dStart.getMinutes() + parseFloat(hoursOffset) * 60);
     const dEnd = new Date(dStart.getTime() + 60 * 60 * 1000); // 1hr duration
 
-    const newEvent: CalendarEvent = {
-      id: `cal-${Date.now()}`,
-      title,
-      start_time: dStart.toISOString(),
-      end_time: dEnd.toISOString()
-    };
-
-    setDb(prev => {
-      const newState = {
-        ...prev,
-        calendar_events: [...prev.calendar_events, newEvent],
-        schedule_blocks: [
-          ...prev.schedule_blocks,
-          {
-            id: `block-cal-${Date.now()}`,
-            title: `Event: ${title}`,
-            start_time: dStart.toISOString(),
-            end_time: dEnd.toISOString(),
-            source: "calendar_synced" as const,
-            status: "planned" as const
-          }
-        ]
-      };
-      // Keep persistent local write
-      // Note: in background, this syncs perfectly
-      return newState;
-    });
+    try {
+      const res = await fetchWithAuth("/api/calendar/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          start_time: dStart.toISOString(),
+          end_time: dEnd.toISOString()
+        })
+      });
+      if (res.ok) {
+        await fetchData();
+        addToast("Calendar Synced", `Scheduled focus session block around "${title}".`, "success");
+      }
+    } catch (err: any) {
+      console.error("Failed to add calendar event:", err);
+      addToast("Sync Failed", "Could not write to your cloud calendar.", "danger");
+    }
   };
 
   // Add Goal & Habit Inline helpers
-  const handleAddGoal = (e: React.FormEvent) => {
+  const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGoalTitle.trim()) return;
 
-    const newGoal: Goal = {
-      id: `goal-${Date.now()}`,
-      title: newGoalTitle,
-      target_date: new Date(Date.now() + 86400000 * 30).toISOString(), // 30 days away
-      progress_percent: 0,
-      category: newGoalCategory
-    };
-
-    setDb(prev => ({
-      ...prev,
-      goals: [...prev.goals, newGoal]
-    }));
-    setNewGoalTitle("");
+    try {
+      const res = await fetchWithAuth("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newGoalTitle.trim(),
+          target_date: new Date(Date.now() + 86400000 * 30).toISOString(), // 30 days away
+          progress_percent: 0,
+          category: newGoalCategory
+        })
+      });
+      if (res.ok) {
+        await fetchData();
+        setNewGoalTitle("");
+        addToast("Goal Created", `Successfully committed to "${newGoalTitle}".`, "success");
+      }
+    } catch (err) {
+      console.error("Failed to add goal:", err);
+    }
   };
 
-  const handleAddHabit = (e: React.FormEvent) => {
+  const handleAddHabit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHabitTitle.trim()) return;
 
-    const newHabit: Habit = {
-      id: `habit-${Date.now()}`,
-      title: newHabitTitle,
-      frequency: newHabitFreq,
-      streak_count: 0
-    };
-
-    setDb(prev => ({
-      ...prev,
-      habits: [...prev.habits, newHabit]
-    }));
-    setNewHabitTitle("");
+    try {
+      const res = await fetchWithAuth("/api/habits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newHabitTitle.trim(),
+          frequency: newHabitFreq
+        })
+      });
+      if (res.ok) {
+        await fetchData();
+        setNewHabitTitle("");
+        addToast("Habit Formed", `Daily safeguard lock initialized for "${newHabitTitle}".`, "success");
+      }
+    } catch (err) {
+      console.error("Failed to add habit:", err);
+    }
   };
 
-  const handleIncrementHabit = (habitId: string) => {
-    setDb(prev => ({
-      ...prev,
-      habits: prev.habits.map(h => h.id === habitId ? { ...h, streak_count: h.streak_count + 1, last_completed_at: new Date().toISOString().split("T")[0] } : h)
-    }));
+  const handleIncrementHabit = async (habitId: string) => {
+    try {
+      const res = await fetchWithAuth(`/api/habits/${habitId}`, {
+        method: "PUT"
+      });
+      if (res.ok) {
+        await fetchData();
+        addToast("Streak Updated!", "Cognitive behavior habit locked in for today.", "success");
+      }
+    } catch (err) {
+      console.error("Failed to increment habit:", err);
+    }
   };
 
   // Utility to determine Task Urgency indicators
@@ -904,6 +1037,125 @@ export default function App() {
     return null;
   };
 
+  if (!token) {
+    return (
+      <div className="relative min-h-screen bg-[#070b13] text-white font-sans overflow-x-hidden flex items-center justify-center p-4">
+        {/* MESH BLURRED BACKGROUND BLOBS */}
+        <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
+          <div className="absolute blob blob-1 top-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-600/20 rounded-full filter blur-[120px] animate-float-1" />
+          <div className="absolute blob blob-2 bottom-[10%] right-[-5%] w-[600px] h-[600px] bg-pink-500/15 rounded-full filter blur-[130px] animate-float-2" />
+        </div>
+
+        <div className="relative z-10 w-full max-w-md">
+          {/* Brand/Header */}
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 shadow-xl shadow-indigo-500/20 mb-4">
+              <ShieldAlert className="w-8 h-8 text-white animate-pulse" />
+            </div>
+            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">
+              DeadlineGuardian
+            </h1>
+            <p className="text-xs text-slate-400 font-medium mt-1">
+              Autonomous Cognitive Planning & Threat Mitigation Engine
+            </p>
+          </div>
+
+          <div className="glass-dark rounded-2xl border border-white/10 shadow-2xl p-6 md:p-8 relative overflow-hidden">
+            {/* Ambient glow */}
+            <div className="absolute -top-12 -left-12 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none" />
+
+            <div className="flex border-b border-white/5 mb-6">
+              <button
+                type="button"
+                className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+                  authMode === 'login'
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+                onClick={() => { setAuthMode('login'); setAuthError(null); }}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`flex-1 pb-3 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+                  authMode === 'register'
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+                onClick={() => { setAuthMode('register'); setAuthError(null); }}
+              >
+                Create Account
+              </button>
+            </div>
+
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              {authError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 text-xs text-rose-300 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                  Username
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-500">
+                    <User className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value)}
+                    className="w-full bg-slate-950/50 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-medium"
+                    placeholder="e.g. adafocus"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                  Password
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-500">
+                    <Settings className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full bg-slate-950/50 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-medium"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white font-bold text-sm py-3 rounded-xl shadow-lg hover:shadow-indigo-500/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
+              >
+                {authLoading ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    <span>{authMode === 'login' ? "Secure Sign In" : "Register Workspace"}</span>
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen bg-[#070b13] text-white font-sans overflow-x-hidden">
       
@@ -1010,6 +1262,25 @@ export default function App() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
+
+            {/* User Profile info and Logout */}
+            {user && (
+              <div className="flex items-center gap-2.5 bg-slate-900/50 hover:bg-slate-800/60 pl-3.5 pr-2.5 py-1.5 rounded-xl border border-white/5 transition-all">
+                <div className="flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="text-xs font-bold text-slate-300">
+                    {user.username}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Sign Out"
+                  className="p-1 text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer hover:bg-rose-500/10 flex items-center justify-center"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 

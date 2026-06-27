@@ -4,11 +4,78 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import crypto from "crypto";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// In-memory active session tokens mapping to user ID
+const activeSessions: Record<string, string> = {};
+
+function hashPassword(password: string): string {
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
+
+function generateSessionToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function authenticateToken(req: any, res: any, next: any) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  
+  const userId = activeSessions[token];
+  if (!userId) {
+    return res.status(401).json({ error: "Session expired or invalid" });
+  }
+  
+  req.userId = userId;
+  next();
+}
+
+// Scoped state helper to filter DB contents by User ID
+function getScopedData(db: any, userId: string) {
+  return {
+    tasks: (db.tasks || []).filter((t: any) => t.user_id === userId),
+    schedule_blocks: (db.schedule_blocks || []).filter((b: any) => b.user_id === userId),
+    calendar_events: (db.calendar_events || []).filter((c: any) => c.user_id === userId),
+    goals: (db.goals || []).filter((g: any) => g.user_id === userId),
+    habits: (db.habits || []).filter((h: any) => h.user_id === userId),
+    patterns: (db.patterns || []).filter((p: any) => p.user_id === userId),
+    conversations: (db.conversations || []).filter((c: any) => c.user_id === userId),
+    autonomous_logs: (db.autonomous_logs || []).filter((l: any) => l.user_id === userId)
+  };
+}
+
+// Seed the user's workspace with a personal copy of the standard default seed items
+function seedUserDB(db: any, userId: string) {
+  const defaultState = getDefaultState();
+  const keys = [
+    "tasks", "schedule_blocks", "calendar_events", "goals", "habits", "patterns", "conversations", "autonomous_logs"
+  ];
+  
+  keys.forEach(key => {
+    if (defaultState[key]) {
+      const clonedItems = defaultState[key].map((item: any) => {
+        const copy = { ...item, user_id: userId };
+        if (copy.id) {
+          copy.id = `${copy.id}-${userId}`;
+        }
+        if (copy.task_id) {
+          copy.task_id = `${copy.task_id}-${userId}`;
+        }
+        return copy;
+      });
+      db[key] = (db[key] || []).concat(clonedItems);
+    }
+  });
+}
 
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), "db.json");
@@ -257,15 +324,17 @@ const getDefaultState = () => {
 function readDB(): any {
   try {
     if (!fs.existsSync(DB_FILE)) {
-      const defaultState = getDefaultState();
+      const defaultState = { ...getDefaultState(), users: [] };
       fs.writeFileSync(DB_FILE, JSON.stringify(defaultState, null, 2));
       return defaultState;
     }
     const raw = fs.readFileSync(DB_FILE, "utf-8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    parsed.users = parsed.users || [];
+    return parsed;
   } catch (error) {
     console.error("Failed to read db.json, returning default state", error);
-    return getDefaultState();
+    return { ...getDefaultState(), users: [] };
   }
 }
 
@@ -331,28 +400,131 @@ function calculateBasePriority(task: any) {
 // API ROUTES
 // -------------------------------------------------------------
 
-// General Data fetch
-app.get("/api/data", (req, res) => {
+// REGISTER
+app.post("/api/auth/register", (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required" });
+  }
+
+  const db = readDB();
+  const trimmedLower = username.trim().toLowerCase();
+
+  const userExists = db.users.some((u: any) => u.username.toLowerCase() === trimmedLower);
+  if (userExists) {
+    return res.status(400).json({ error: "Username is already taken" });
+  }
+
+  const userId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const newUser = {
+    id: userId,
+    username: username.trim(),
+    passwordHash: hashPassword(password),
+    created_at: new Date().toISOString()
+  };
+
+  db.users.push(newUser);
+  
+  // Seed this specific user's database with personal copies of demo items
+  seedUserDB(db, userId);
+  writeDB(db);
+
+  const token = generateSessionToken();
+  activeSessions[token] = userId;
+
   res.json({
-    ...readDB(),
+    success: true,
+    token,
+    user: { id: userId, username: newUser.username }
+  });
+});
+
+// LOGIN
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required" });
+  }
+
+  const db = readDB();
+  const trimmedLower = username.trim().toLowerCase();
+
+  const user = db.users.find((u: any) => u.username.toLowerCase() === trimmedLower);
+  if (!user || user.passwordHash !== hashPassword(password)) {
+    return res.status(401).json({ error: "Invalid username or password" });
+  }
+
+  const token = generateSessionToken();
+  activeSessions[token] = user.id;
+
+  res.json({
+    success: true,
+    token,
+    user: { id: user.id, username: user.username }
+  });
+});
+
+// CURRENT USER PROFILE
+app.get("/api/auth/me", authenticateToken, (req: any, res: any) => {
+  const db = readDB();
+  const user = db.users.find((u: any) => u.id === req.userId);
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
+  res.json({
+    success: true,
+    user: { id: user.id, username: user.username }
+  });
+});
+
+// Apply authentication middleware for all database / agent / pomodoro / patterns / schedule endpoints
+app.use("/api/data", authenticateToken);
+app.use("/api/tasks", authenticateToken);
+app.use("/api/schedule", authenticateToken);
+app.use("/api/agent", authenticateToken);
+app.use("/api/patterns", authenticateToken);
+app.use("/api/pomodoro", authenticateToken);
+app.use("/api/calendar", authenticateToken);
+app.use("/api/goals", authenticateToken);
+app.use("/api/habits", authenticateToken);
+
+// General Data fetch (Scoped to Current User)
+app.get("/api/data", (req: any, res: any) => {
+  const db = readDB();
+  res.json({
+    ...getScopedData(db, req.userId),
     isGeminiConfigured: isGeminiConfigured()
   });
 });
 
-// Force Database Reset to Seed Data
-app.post("/api/data/reset", (req, res) => {
-  const newState = getDefaultState();
-  writeDB(newState);
-  res.json({ success: true, state: newState });
+// Reset User Workspace Back to Defaults
+app.post("/api/data/reset", (req: any, res: any) => {
+  const db = readDB();
+  
+  // Clear only items belonging to this user
+  db.tasks = (db.tasks || []).filter((t: any) => t.user_id !== req.userId);
+  db.schedule_blocks = (db.schedule_blocks || []).filter((b: any) => b.user_id !== req.userId);
+  db.calendar_events = (db.calendar_events || []).filter((c: any) => c.user_id !== req.userId);
+  db.goals = (db.goals || []).filter((g: any) => g.user_id !== req.userId);
+  db.habits = (db.habits || []).filter((h: any) => h.user_id !== req.userId);
+  db.patterns = (db.patterns || []).filter((p: any) => p.user_id !== req.userId);
+  db.conversations = (db.conversations || []).filter((c: any) => c.user_id !== req.userId);
+  db.autonomous_logs = (db.autonomous_logs || []).filter((l: any) => l.user_id !== req.userId);
+
+  seedUserDB(db, req.userId);
+  writeDB(db);
+
+  res.json({ success: true, state: getScopedData(db, req.userId) });
 });
 
 // Create Task with hybrid Priority Scoring
-app.post("/api/tasks", async (req, res) => {
+app.post("/api/tasks", async (req: any, res: any) => {
   const db = readDB();
   const taskData = req.body;
 
   const newTask = {
     id: "task-" + Date.now(),
+    user_id: req.userId,
     title: taskData.title || "Untitled Task",
     description: taskData.description || "",
     deadline: taskData.deadline || getRelativeDate(24),
@@ -420,7 +592,7 @@ Return exactly a JSON object matching this schema:
 });
 
 // Reorder Tasks
-app.put("/api/tasks/reorder", (req, res) => {
+app.put("/api/tasks/reorder", (req: any, res: any) => {
   const db = readDB();
   const { orderedIds } = req.body;
 
@@ -429,28 +601,30 @@ app.put("/api/tasks/reorder", (req, res) => {
   }
 
   db.tasks = db.tasks.map((task: any) => {
-    const index = orderedIds.indexOf(task.id);
-    if (index !== -1) {
-      return {
-        ...task,
-        custom_order: index,
-        updated_at: new Date().toISOString()
-      };
+    if (task.user_id === req.userId) {
+      const index = orderedIds.indexOf(task.id);
+      if (index !== -1) {
+        return {
+          ...task,
+          custom_order: index,
+          updated_at: new Date().toISOString()
+        };
+      }
     }
     return task;
   });
 
   writeDB(db);
-  res.json({ success: true, tasks: db.tasks });
+  res.json({ success: true, tasks: db.tasks.filter((t: any) => t.user_id === req.userId) });
 });
 
 // Update Task
-app.put("/api/tasks/:id", (req, res) => {
+app.put("/api/tasks/:id", (req: any, res: any) => {
   const db = readDB();
   const { id } = req.params;
   const updatedTaskData = req.body;
 
-  const idx = db.tasks.findIndex((t: any) => t.id === id);
+  const idx = db.tasks.findIndex((t: any) => t.id === id && t.user_id === req.userId);
   if (idx === -1) {
     return res.status(404).json({ error: "Task not found" });
   }
@@ -481,9 +655,14 @@ app.put("/api/tasks/:id", (req, res) => {
 });
 
 // Delete Task
-app.delete("/api/tasks/:id", (req, res) => {
+app.delete("/api/tasks/:id", (req: any, res: any) => {
   const db = readDB();
   const { id } = req.params;
+
+  const task = db.tasks.find((t: any) => t.id === id && t.user_id === req.userId);
+  if (!task) {
+    return res.status(404).json({ error: "Task not found" });
+  }
 
   db.tasks = db.tasks.filter((t: any) => t.id !== id);
   db.schedule_blocks = db.schedule_blocks.filter((b: any) => b.task_id !== id);
@@ -591,14 +770,14 @@ function getFallbackSubtasks(task: any): string[] {
 }
 
 // Auto-generate Subtasks using Gemini
-app.post("/api/tasks/:id/subtasks", async (req, res) => {
+app.post("/api/tasks/:id/subtasks", async (req: any, res: any) => {
   if (!isGeminiConfigured()) {
     return res.status(400).json({ error: "Gemini API is not configured. Please add your key to get AI breakdowns." });
   }
 
   const db = readDB();
   const { id } = req.params;
-  const task = db.tasks.find((t: any) => t.id === id);
+  const task = db.tasks.find((t: any) => t.id === id && t.user_id === req.userId);
 
   if (!task) {
     return res.status(404).json({ error: "Task not found" });
@@ -657,15 +836,15 @@ Return exactly a JSON array of strings:
 });
 
 // Auto-Plan My Day (Gemini Scheduling Assistant)
-app.post("/api/schedule/auto-plan", async (req, res) => {
+app.post("/api/schedule/auto-plan", async (req: any, res: any) => {
   if (!isGeminiConfigured()) {
     return res.status(400).json({ error: "Gemini API key is required to use Auto-Plan scheduler." });
   }
 
   const db = readDB();
-  const pendingTasks = db.tasks.filter((t: any) => t.status !== "done");
-  const calendarEvents = db.calendar_events;
-  const userPatterns = db.patterns;
+  const pendingTasks = db.tasks.filter((t: any) => t.status !== "done" && t.user_id === req.userId);
+  const calendarEvents = db.calendar_events.filter((c: any) => c.user_id === req.userId);
+  const userPatterns = db.patterns.filter((p: any) => p.user_id === req.userId);
 
   try {
     const aiClient = getGeminiClient();
@@ -713,6 +892,7 @@ Return exactly a JSON object of this structure:
     const parsed = JSON.parse(aiResponse.text?.trim() || "{}");
     const newBlocks = (parsed.blocks || []).map((b: any, index: number) => ({
       id: `block-${Date.now()}-${index}`,
+      user_id: req.userId,
       task_id: b.task_id,
       title: b.title,
       start_time: b.start_time,
@@ -721,15 +901,16 @@ Return exactly a JSON object of this structure:
       status: "planned" as const
     }));
 
-    // Filter out previous AI suggested blocks to replace with the fresh day plan, but preserve user set blocks
+    // Filter out previous AI suggested blocks to replace with the fresh day plan for this user only
     db.schedule_blocks = [
-      ...db.schedule_blocks.filter((b: any) => b.source !== "ai_suggested"),
+      ...db.schedule_blocks.filter((b: any) => b.user_id !== req.userId || b.source !== "ai_suggested"),
       ...newBlocks
     ];
 
     // Log the event
     db.autonomous_logs.unshift({
       id: `log-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       title: "AI Schedule Re-Balanced",
       description: `Optimized calendar blocks for ${newBlocks.length} pending tasks around calendar constraints.`,
@@ -738,14 +919,16 @@ Return exactly a JSON object of this structure:
     });
 
     writeDB(db);
-    res.json({ success: true, blocks: db.schedule_blocks, reasoning: parsed.reasoning });
+    res.json({ success: true, blocks: db.schedule_blocks.filter((b: any) => b.user_id === req.userId), reasoning: parsed.reasoning });
   } catch (error: any) {
     console.warn("Auto plan with AI failed, using fallback deterministic safeguard:", error);
     
     // Execute our beautiful local deterministic scheduling instead!
-    const { blocks, reasoning } = deterministicAutoPlan(db);
+    const scopedDB = getScopedData(db, req.userId);
+    const { blocks, reasoning } = deterministicAutoPlan(scopedDB);
     const newBlocks = blocks.map((b: any, index: number) => ({
       id: `block-fallback-${Date.now()}-${index}`,
+      user_id: req.userId,
       task_id: b.task_id,
       title: b.title,
       start_time: b.start_time,
@@ -755,12 +938,13 @@ Return exactly a JSON object of this structure:
     }));
 
     db.schedule_blocks = [
-      ...db.schedule_blocks.filter((b: any) => b.source !== "ai_suggested"),
+      ...db.schedule_blocks.filter((b: any) => b.user_id !== req.userId || b.source !== "ai_suggested"),
       ...newBlocks
     ];
 
     db.autonomous_logs.unshift({
       id: `log-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       title: "Local Schedule Optimizer Engaged",
       description: `Locally scheduled ${newBlocks.length} pending tasks to prevent disruption.`,
@@ -769,12 +953,12 @@ Return exactly a JSON object of this structure:
     });
 
     writeDB(db);
-    res.json({ success: true, blocks: db.schedule_blocks, reasoning });
+    res.json({ success: true, blocks: db.schedule_blocks.filter((b: any) => b.user_id === req.userId), reasoning });
   }
 });
 
 // Chat with DeadlineGuardian Assistant
-app.post("/api/agent/chat", async (req, res) => {
+app.post("/api/agent/chat", async (req: any, res: any) => {
   const { message } = req.body;
   if (!message) {
     return res.status(400).json({ error: "Message is required" });
@@ -785,6 +969,7 @@ app.post("/api/agent/chat", async (req, res) => {
   // Add user message to conversations list
   const userMsg = {
     id: `msg-${Date.now()}-u`,
+    user_id: req.userId,
     role: "user" as const,
     content: message,
     created_at: new Date().toISOString()
@@ -795,20 +980,21 @@ app.post("/api/agent/chat", async (req, res) => {
     // If Gemini is missing, return a polite static response to maintain absolute usability
     const fallbackMsg = {
       id: `msg-${Date.now()}-a`,
+      user_id: req.userId,
       role: "assistant" as const,
       content: "I'd love to chat and help you plan your tasks, but your Gemini API key is missing. Please add it via **Settings > Secrets** in the panel to enable intelligent planning, auto-scheduling, and task breakdowns!",
       created_at: new Date().toISOString()
     };
     db.conversations.push(fallbackMsg);
     writeDB(db);
-    return res.json({ reply: fallbackMsg.content, dbState: db });
+    return res.json({ reply: fallbackMsg.content, dbState: getScopedData(db, req.userId) });
   }
 
   try {
     const aiClient = getGeminiClient();
-    const pendingTasks = db.tasks.filter((t: any) => t.status !== "done");
-    const upcomingSchedule = db.schedule_blocks;
-    const currentPatterns = db.patterns;
+    const pendingTasks = db.tasks.filter((t: any) => t.status !== "done" && t.user_id === req.userId);
+    const upcomingSchedule = db.schedule_blocks.filter((b: any) => b.user_id === req.userId);
+    const currentPatterns = db.patterns.filter((p: any) => p.user_id === req.userId);
 
     const systemInstruction = `You are DeadlineGuardian, a highly capable, proactive AI executive assistant helping the user complete critical tasks before deadlines.
 Current Time is: ${new Date().toISOString()}
@@ -836,7 +1022,11 @@ Respond in JSON with:
 }`;
 
     // Get previous messages (last 8) for context
-    const recentHistory = db.conversations.slice(-8).map((m: any) => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+    const recentHistory = db.conversations
+      .filter((m: any) => m.user_id === req.userId)
+      .slice(-8)
+      .map((m: any) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
 
     const aiResponse = await aiClient.models.generateContent({
       model: "gemini-3.5-flash",
@@ -857,7 +1047,7 @@ Respond in JSON with:
     // Apply any actions returned by Gemini
     actions.forEach((act: any) => {
       if (act.type === "create_subtasks" && act.taskId && Array.isArray(act.subtasks)) {
-        const task = db.tasks.find((t: any) => t.id === act.taskId);
+        const task = db.tasks.find((t: any) => t.id === act.taskId && t.user_id === req.userId);
         if (task) {
           task.subtasks = act.subtasks.map((title: string, index: number) => ({
             id: `sub-${Date.now()}-${index}`,
@@ -867,9 +1057,10 @@ Respond in JSON with:
           actionsTaken.push({ type: "create_subtasks", detail: `Broke "${task.title}" down into ${act.subtasks.length} atomic steps.` });
         }
       } else if (act.type === "schedule_block" && act.taskId && act.startTime && act.endTime) {
-        const task = db.tasks.find((t: any) => t.id === act.taskId);
+        const task = db.tasks.find((t: any) => t.id === act.taskId && t.user_id === req.userId);
         db.schedule_blocks.push({
           id: `block-${Date.now()}`,
+          user_id: req.userId,
           task_id: act.taskId,
           title: act.title || `Work on ${task ? task.title : 'Task'}`,
           start_time: act.startTime,
@@ -879,14 +1070,14 @@ Respond in JSON with:
         });
         actionsTaken.push({ type: "schedule_block", detail: `Booked slot "${act.title || 'Work block'}" on your calendar.` });
       } else if (act.type === "update_priority" && act.taskId && typeof act.score === "number") {
-        const task = db.tasks.find((t: any) => t.id === act.taskId);
+        const task = db.tasks.find((t: any) => t.id === act.taskId && t.user_id === req.userId);
         if (task) {
           task.priority_score = act.score;
           task.priority_reason = act.reason || "Adjusted manually by AI assistant.";
           actionsTaken.push({ type: "update_priority", detail: `Boosted "${task.title}" priority to ${act.score}/100.` });
         }
       } else if (act.type === "status_change" && act.taskId && act.status) {
-        const task = db.tasks.find((t: any) => t.id === act.taskId);
+        const task = db.tasks.find((t: any) => t.id === act.taskId && t.user_id === req.userId);
         if (task) {
           task.status = act.status;
           if (act.status === "done") {
@@ -899,6 +1090,7 @@ Respond in JSON with:
 
     const assistantMsg = {
       id: `msg-${Date.now()}-a`,
+      user_id: req.userId,
       role: "assistant" as const,
       content: replyText,
       created_at: new Date().toISOString(),
@@ -911,6 +1103,7 @@ Respond in JSON with:
     if (actionsTaken.length > 0) {
       db.autonomous_logs.unshift({
         id: `log-${Date.now()}`,
+        user_id: req.userId,
         timestamp: new Date().toISOString(),
         title: "Assistant Request Handled",
         description: actionsTaken.map(a => a.detail).join(", "),
@@ -920,7 +1113,7 @@ Respond in JSON with:
     }
 
     writeDB(db);
-    res.json({ reply: replyText, actionsTaken, dbState: db });
+    res.json({ reply: replyText, actionsTaken, dbState: getScopedData(db, req.userId) });
   } catch (error: any) {
     console.warn("Chat agent failed with AI error, executing fallback:", error);
     
@@ -933,18 +1126,19 @@ Respond in JSON with:
       
     const assistantMsg = {
       id: `msg-${Date.now()}-a`,
+      user_id: req.userId,
       role: "assistant" as const,
       content,
       created_at: new Date().toISOString()
     };
     db.conversations.push(assistantMsg);
     writeDB(db);
-    res.json({ reply: assistantMsg.content, actionsTaken: [], dbState: db });
+    res.json({ reply: assistantMsg.content, actionsTaken: [], dbState: getScopedData(db, req.userId) });
   }
 });
 
 // Autonomous background tick simulation
-app.post("/api/agent/autonomous-tick", async (req, res) => {
+app.post("/api/agent/autonomous-tick", async (req: any, res: any) => {
   const db = readDB();
 
   if (!isGeminiConfigured()) {
@@ -966,18 +1160,33 @@ app.post("/api/agent/autonomous-tick", async (req, res) => {
     const picked = mockActions[Math.floor(Math.random() * mockActions.length)];
     const newLog = {
       id: `log-auto-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       ...picked
     };
     db.autonomous_logs.unshift(newLog);
+
+    // Apply structural changes if applicable for this mock fallback
+    if (picked.action_type === "task_split") {
+      const target = db.tasks.find((t: any) => t.status !== "done" && t.user_id === req.userId && (t.subtasks || []).length === 0);
+      if (target) {
+        target.subtasks = [
+          { id: `sub-${Date.now()}-1`, title: "Review requirements & setup draft", completed: false },
+          { id: `sub-${Date.now()}-2`, title: "Draft first section of content", completed: false },
+          { id: `sub-${Date.now()}-3`, title: "Proofread and execute submit actions", completed: false }
+        ];
+        newLog.description = `Split your intimidating task "${target.title}" into 3 simple micro-steps to bypass mental blocks.`;
+      }
+    }
+
     writeDB(db);
-    return res.json({ log: newLog, dbState: db });
+    return res.json({ log: newLog, dbState: getScopedData(db, req.userId) });
   }
 
   try {
     const aiClient = getGeminiClient();
-    const pendingTasks = db.tasks.filter((t: any) => t.status !== "done");
-    const currentSchedule = db.schedule_blocks;
+    const pendingTasks = db.tasks.filter((t: any) => t.status !== "done" && t.user_id === req.userId);
+    const currentSchedule = db.schedule_blocks.filter((b: any) => b.user_id === req.userId);
 
     const prompt = `You are DeadlineGuardian's background Agent loop.
 You run periodically on a cron tick to evaluate the user's productivity threats.
@@ -1018,6 +1227,7 @@ Return exactly a JSON object:
 
     const newLog = {
       id: logId,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       title: action.title || "Autonomous Safeguard Initiated",
       description: action.description || "Reviewed workspace tasks and confirmed status.",
@@ -1030,7 +1240,7 @@ Return exactly a JSON object:
     // Apply the structural changes if possible!
     if (action.action_type === "task_split") {
       // Find a task that has no subtasks or needs help
-      const target = db.tasks.find((t: any) => t.status !== "done" && t.subtasks.length === 0);
+      const target = db.tasks.find((t: any) => t.status !== "done" && t.user_id === req.userId && (t.subtasks || []).length === 0);
       if (target) {
         target.subtasks = [
           { id: `sub-${Date.now()}-1`, title: "Review requirements & setup draft", completed: false },
@@ -1040,12 +1250,13 @@ Return exactly a JSON object:
         newLog.description = `Split your intimidating task "${target.title}" into 3 simple micro-steps to bypass mental blocks.`;
       }
     } else if (action.action_type === "reschedule") {
-      const target = db.tasks.find((t: any) => t.status !== "done");
+      const target = db.tasks.find((t: any) => t.status !== "done" && t.user_id === req.userId);
       if (target) {
         const start = getRelativeDate(1.5);
         const end = getRelativeDate(2.5);
         db.schedule_blocks.push({
           id: `block-auto-${Date.now()}`,
+          user_id: req.userId,
           task_id: target.id,
           title: `Focus session: ${target.title}`,
           start_time: start,
@@ -1058,7 +1269,7 @@ Return exactly a JSON object:
     }
 
     writeDB(db);
-    res.json({ success: true, log: newLog, dbState: db });
+    res.json({ success: true, log: newLog, dbState: getScopedData(db, req.userId) });
   } catch (error: any) {
     console.warn("Autonomous tick failed (API error), executing fallback safeguard:", error);
     
@@ -1086,6 +1297,7 @@ Return exactly a JSON object:
     const picked = mockActions[Math.floor(Math.random() * mockActions.length)];
     const newLog = {
       id: `log-auto-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       ...picked
     };
@@ -1093,7 +1305,7 @@ Return exactly a JSON object:
 
     // Apply structural changes if applicable
     if (picked.action_type === "task_split") {
-      const target = db.tasks.find((t: any) => t.status !== "done" && t.subtasks.length === 0);
+      const target = db.tasks.find((t: any) => t.status !== "done" && t.user_id === req.userId && (t.subtasks || []).length === 0);
       if (target) {
         target.subtasks = [
           { id: `sub-${Date.now()}-1`, title: "Review requirements & setup draft", completed: false },
@@ -1103,12 +1315,13 @@ Return exactly a JSON object:
         newLog.description = `Split your intimidating task "${target.title}" into 3 simple micro-steps to bypass mental blocks.`;
       }
     } else if (picked.action_type === "reschedule") {
-      const target = db.tasks.find((t: any) => t.status !== "done");
+      const target = db.tasks.find((t: any) => t.status !== "done" && t.user_id === req.userId);
       if (target) {
         const start = getRelativeDate(1.5);
         const end = getRelativeDate(2.5);
         db.schedule_blocks.push({
           id: `block-auto-${Date.now()}`,
+          user_id: req.userId,
           task_id: target.id,
           title: `Focus session: ${target.title}`,
           start_time: start,
@@ -1121,23 +1334,26 @@ Return exactly a JSON object:
     }
 
     writeDB(db);
-    res.json({ success: true, log: newLog, dbState: db, fallback: true });
+    res.json({ success: true, log: newLog, dbState: getScopedData(db, req.userId), fallback: true });
   }
 });
 
 // Learn new Productivity Patterns from task history
-app.post("/api/patterns/analyze", async (req, res) => {
+app.post("/api/patterns/analyze", async (req: any, res: any) => {
   if (!isGeminiConfigured()) {
     return res.status(400).json({ error: "Gemini API key is required to analyze patterns." });
   }
 
   const db = readDB();
+  const userTasks = db.tasks.filter((t: any) => t.user_id === req.userId);
+  const userHabits = db.habits.filter((h: any) => h.user_id === req.userId);
+
   try {
     const aiClient = getGeminiClient();
     const prompt = `You are DeadlineGuardian's Cognitive Analytics engine.
 Analyze the user's current goals, habits, and tasks:
-Tasks: ${JSON.stringify(db.tasks, null, 2)}
-Habits: ${JSON.stringify(db.habits, null, 2)}
+Tasks: ${JSON.stringify(userTasks, null, 2)}
+Habits: ${JSON.stringify(userHabits, null, 2)}
 
 Spot an insightful productivity pattern, procrastination trigger, or time estimation gap.
 Be extremely helpful and actionable. Return exactly a JSON object:
@@ -1159,6 +1375,7 @@ Be extremely helpful and actionable. Return exactly a JSON object:
     const parsed = JSON.parse(aiResponse.text?.trim() || "{}");
     const newPattern = {
       id: `pattern-${Date.now()}`,
+      user_id: req.userId,
       pattern_type: parsed.pattern_type || "procrastination_risk",
       title: parsed.title || "Custom Behavior Synthesized",
       description: parsed.description || "Noticed completion rhythms have leveled out positively.",
@@ -1166,14 +1383,15 @@ Be extremely helpful and actionable. Return exactly a JSON object:
       updated_at: new Date().toISOString()
     };
 
-    db.patterns.unshift(newPattern);
-    // Keep max 4 patterns
-    if (db.patterns.length > 4) {
-      db.patterns.pop();
-    }
+    db.patterns = [
+      newPattern,
+      ...db.patterns.filter((p: any) => p.user_id === req.userId).slice(0, 3),
+      ...db.patterns.filter((p: any) => p.user_id !== req.userId)
+    ];
 
     db.autonomous_logs.unshift({
       id: `log-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       title: "New Productivity Insight Synthesized",
       description: `Discovered behavior pattern: "${newPattern.title}"`,
@@ -1182,7 +1400,7 @@ Be extremely helpful and actionable. Return exactly a JSON object:
     });
 
     writeDB(db);
-    res.json({ success: true, pattern: newPattern, dbState: db });
+    res.json({ success: true, pattern: newPattern, dbState: getScopedData(db, req.userId) });
   } catch (error: any) {
     console.warn("Pattern analysis failed (API error), executing fallback safeguard:", error);
     
@@ -1202,6 +1420,7 @@ Be extremely helpful and actionable. Return exactly a JSON object:
     const parsed = fallbackPatterns[Math.floor(Math.random() * fallbackPatterns.length)];
     const newPattern = {
       id: `pattern-${Date.now()}`,
+      user_id: req.userId,
       pattern_type: parsed.pattern_type,
       title: parsed.title,
       description: parsed.description,
@@ -1209,13 +1428,15 @@ Be extremely helpful and actionable. Return exactly a JSON object:
       updated_at: new Date().toISOString()
     };
     
-    db.patterns.unshift(newPattern);
-    if (db.patterns.length > 4) {
-      db.patterns.pop();
-    }
+    db.patterns = [
+      newPattern,
+      ...db.patterns.filter((p: any) => p.user_id === req.userId).slice(0, 3),
+      ...db.patterns.filter((p: any) => p.user_id !== req.userId)
+    ];
 
     db.autonomous_logs.unshift({
       id: `log-${Date.now()}`,
+      user_id: req.userId,
       timestamp: new Date().toISOString(),
       title: "Productivity Safeguard Insight Added",
       description: `Discovered behavior pattern: "${newPattern.title}"`,
@@ -1224,18 +1445,19 @@ Be extremely helpful and actionable. Return exactly a JSON object:
     });
 
     writeDB(db);
-    res.json({ success: true, pattern: newPattern, dbState: db, fallback: true });
+    res.json({ success: true, pattern: newPattern, dbState: getScopedData(db, req.userId), fallback: true });
   }
 });
 
 // Log Pomodoro Completed Focus Session
-app.post("/api/pomodoro/log", (req, res) => {
+app.post("/api/pomodoro/log", (req: any, res: any) => {
   const db = readDB();
   const { taskId, durationMinutes, title } = req.body;
 
   const logId = `log-pomo-${Date.now()}`;
   db.autonomous_logs.unshift({
     id: logId,
+    user_id: req.userId,
     timestamp: new Date().toISOString(),
     title: `Pomodoro Focus Session Completed`,
     description: `Successfully finished a ${durationMinutes}-minute deep focus block for task: "${title}"`,
@@ -1244,7 +1466,101 @@ app.post("/api/pomodoro/log", (req, res) => {
   });
 
   writeDB(db);
-  res.json({ success: true, dbState: db });
+  res.json({ success: true, dbState: getScopedData(db, req.userId) });
+});
+
+// Calendar Events
+app.post("/api/calendar/events", (req: any, res: any) => {
+  const db = readDB();
+  const { title, start_time, end_time } = req.body;
+
+  const newEventId = `cal-${Date.now()}`;
+  const newBlockId = `block-cal-${Date.now()}`;
+
+  const newEvent = {
+    id: newEventId,
+    user_id: req.userId,
+    title,
+    start_time,
+    end_time
+  };
+
+  const newBlock = {
+    id: newBlockId,
+    user_id: req.userId,
+    title: `Event: ${title}`,
+    start_time,
+    end_time,
+    source: "calendar_synced",
+    status: "planned"
+  };
+
+  db.calendar_events = db.calendar_events || [];
+  db.schedule_blocks = db.schedule_blocks || [];
+
+  db.calendar_events.push(newEvent);
+  db.schedule_blocks.push(newBlock);
+
+  writeDB(db);
+  res.json({ success: true, dbState: getScopedData(db, req.userId) });
+});
+
+// Goals
+app.post("/api/goals", (req: any, res: any) => {
+  const db = readDB();
+  const { title, target_date, progress_percent, category } = req.body;
+
+  const newGoal = {
+    id: `goal-${Date.now()}`,
+    user_id: req.userId,
+    title,
+    target_date,
+    progress_percent: progress_percent || 0,
+    category
+  };
+
+  db.goals = db.goals || [];
+  db.goals.push(newGoal);
+
+  writeDB(db);
+  res.json({ success: true, dbState: getScopedData(db, req.userId) });
+});
+
+// Habits
+app.post("/api/habits", (req: any, res: any) => {
+  const db = readDB();
+  const { title, frequency } = req.body;
+
+  const newHabit = {
+    id: `habit-${Date.now()}`,
+    user_id: req.userId,
+    title,
+    frequency,
+    streak_count: 0
+  };
+
+  db.habits = db.habits || [];
+  db.habits.push(newHabit);
+
+  writeDB(db);
+  res.json({ success: true, dbState: getScopedData(db, req.userId) });
+});
+
+// Update/Increment Habit
+app.put("/api/habits/:id", (req: any, res: any) => {
+  const db = readDB();
+  const { id } = req.params;
+
+  const habit = (db.habits || []).find((h: any) => h.id === id && h.user_id === req.userId);
+  if (!habit) {
+    return res.status(404).json({ error: "Habit not found" });
+  }
+
+  habit.streak_count = (habit.streak_count || 0) + 1;
+  habit.last_completed_at = new Date().toISOString().split("T")[0];
+
+  writeDB(db);
+  res.json({ success: true, dbState: getScopedData(db, req.userId) });
 });
 
 // -------------------------------------------------------------
