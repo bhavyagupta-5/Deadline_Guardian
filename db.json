@@ -1,0 +1,304 @@
+{
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "CS101 Final Coding Project Submission",
+      "description": "Submit the GitHub repository link and writeup for the React portfolio project. Needs to include responsive design and state persistence.",
+      "deadline": "2026-06-27T06:49:33.684Z",
+      "estimated_minutes": 120,
+      "category": "assignment",
+      "status": "pending",
+      "priority_score": 94,
+      "priority_reason": "Critical: Due in under 3 hours, weighted 25% of overall course grade.",
+      "energy_level": "high",
+      "source": "manual",
+      "subtasks": [
+        {
+          "id": "sub-1-1",
+          "title": "Complete README documentation",
+          "completed": false
+        },
+        {
+          "id": "sub-1-2",
+          "title": "Test responsive viewport breaks",
+          "completed": false
+        },
+        {
+          "id": "sub-1-3",
+          "title": "Submit link on Canvas dashboard",
+          "completed": false
+        }
+      ],
+      "created_at": "2026-06-25T04:19:33.684Z"
+    },
+    {
+      "id": "task-2",
+      "title": "Pay Electricity and Wifi Bills",
+      "description": "Pay outstanding utility balances to avoid service disruption or late penalty charges.",
+      "deadline": "2026-06-27T22:19:33.685Z",
+      "estimated_minutes": 15,
+      "category": "bill",
+      "status": "pending",
+      "priority_score": 78,
+      "priority_reason": "High: Direct financial late fee penalty if missed; quick win task.",
+      "energy_level": "low",
+      "source": "manual",
+      "subtasks": [
+        {
+          "id": "sub-2-1",
+          "title": "Log into utility portal",
+          "completed": false
+        },
+        {
+          "id": "sub-2-2",
+          "title": "Confirm credit card details",
+          "completed": false
+        }
+      ],
+      "created_at": "2026-06-26T04:19:33.685Z"
+    },
+    {
+      "id": "task-3",
+      "title": "Prepare for Frontend Engineer Technical Interview",
+      "description": "Review system design architectures, React performance hooks, and practice whiteboard algorithms.",
+      "deadline": "2026-06-28T22:19:33.685Z",
+      "estimated_minutes": 240,
+      "category": "interview",
+      "status": "pending",
+      "priority_score": 85,
+      "priority_reason": "High: Huge professional opportunity. Large scope, needs progressive study blocks.",
+      "energy_level": "high",
+      "source": "manual",
+      "subtasks": [
+        {
+          "id": "sub-3-1",
+          "title": "Review React fiber and rendering lifecycles",
+          "completed": true
+        },
+        {
+          "id": "sub-3-2",
+          "title": "Solve 2 LeetCode sliding window problems",
+          "completed": false
+        },
+        {
+          "id": "sub-3-3",
+          "title": "Draft answers for common architectural questions",
+          "completed": false
+        }
+      ],
+      "created_at": "2026-06-24T04:19:33.685Z"
+    },
+    {
+      "id": "task-4",
+      "title": "Weekly Sync with Team Lead",
+      "description": "Align on core product sprints, provide demo files, and review next milestones.",
+      "deadline": "2026-06-27T18:19:33.685Z",
+      "estimated_minutes": 30,
+      "category": "meeting",
+      "status": "pending",
+      "priority_score": 65,
+      "priority_reason": "Medium: Standard status check, preparation blocks are low effort.",
+      "energy_level": "medium",
+      "source": "meeting",
+      "subtasks": [
+        {
+          "id": "sub-4-1",
+          "title": "Prepare weekly bullet-point slide",
+          "completed": false
+        }
+      ],
+      "created_at": "2026-06-26T16:19:33.685Z"
+    },
+    {
+      "id": "task-5",
+      "title": "Grocery Shopping & Meal Prep",
+      "description": "Buy fresh vegetables, lean proteins, and batch cook healthy meals for the workweek.",
+      "deadline": "2026-06-30T04:19:33.685Z",
+      "estimated_minutes": 90,
+      "category": "other",
+      "status": "pending",
+      "priority_score": 42,
+      "priority_reason": "Low: Highly flexible, can be completed during evening downtime.",
+      "energy_level": "medium",
+      "source": "manual",
+      "subtasks": [],
+      "created_at": "2026-06-27T02:19:33.685Z"
+    }
+  ],
+  "schedule_blocks": [
+    {
+      "id": "block-1",
+      "title": "Weekly Sync Event (Calendar)",
+      "start_time": "2026-06-27T17:49:33.685Z",
+      "end_time": "2026-06-27T18:49:33.685Z",
+      "source": "calendar_synced",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-0",
+      "task_id": "task-1",
+      "title": "CS101 Final Coding Project Submission",
+      "start_time": "2026-06-27T04:30:00.000Z",
+      "end_time": "2026-06-27T06:45:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-1",
+      "task_id": "task-3",
+      "title": "Frontend Interview Prep - Deep Focus Block",
+      "start_time": "2026-06-27T09:00:00.000Z",
+      "end_time": "2026-06-27T11:30:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-2",
+      "task_id": "task-2",
+      "title": "Pay Electricity and Wifi Bills",
+      "start_time": "2026-06-27T12:00:00.000Z",
+      "end_time": "2026-06-27T12:15:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-3",
+      "task_id": "task-3",
+      "title": "Frontend Interview Prep - Practice & Review",
+      "start_time": "2026-06-27T14:00:00.000Z",
+      "end_time": "2026-06-27T15:30:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-4",
+      "task_id": "task-4",
+      "title": "Prep for Weekly Sync with Team Lead",
+      "start_time": "2026-06-27T17:15:00.000Z",
+      "end_time": "2026-06-27T17:45:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    },
+    {
+      "id": "block-1782534237488-5",
+      "task_id": "task-5",
+      "title": "Grocery Shopping & Meal Prep",
+      "start_time": "2026-06-27T19:15:00.000Z",
+      "end_time": "2026-06-27T20:45:00.000Z",
+      "source": "ai_suggested",
+      "status": "planned"
+    }
+  ],
+  "calendar_events": [
+    {
+      "id": "cal-1",
+      "title": "Weekly Sync Event",
+      "start_time": "2026-06-27T17:49:33.685Z",
+      "end_time": "2026-06-27T18:49:33.685Z"
+    },
+    {
+      "id": "cal-2",
+      "title": "Dentist Routine Cleaning",
+      "start_time": "2026-06-28T16:19:33.685Z",
+      "end_time": "2026-06-28T17:49:33.685Z"
+    }
+  ],
+  "goals": [
+    {
+      "id": "goal-1",
+      "title": "Land a Full-Time Frontend Job",
+      "target_date": "2026-07-12T04:19:33.685Z",
+      "progress_percent": 45,
+      "category": "career"
+    },
+    {
+      "id": "goal-2",
+      "title": "Build High Healthy Habits (Diet & Sport)",
+      "target_date": "2026-06-30T22:19:33.685Z",
+      "progress_percent": 60,
+      "category": "health"
+    }
+  ],
+  "habits": [
+    {
+      "id": "habit-1",
+      "title": "Algorithms review (30 mins daily)",
+      "frequency": "daily",
+      "streak_count": 5,
+      "last_completed_at": "2026-06-26"
+    },
+    {
+      "id": "habit-2",
+      "title": "Weekly calendar planning",
+      "frequency": "weekly",
+      "streak_count": 3,
+      "last_completed_at": "2026-06-24"
+    }
+  ],
+  "patterns": [
+    {
+      "id": "pattern-1",
+      "pattern_type": "underestimates_duration",
+      "title": "Coding Tasks Estimation Anchor",
+      "description": "You consistently take ~40% longer on coding tasks than initially planned. DeadlineGuardian has automatically padded upcoming project blocks.",
+      "confidence": 0.88,
+      "updated_at": "2026-06-26T04:19:33.685Z"
+    },
+    {
+      "id": "pattern-2",
+      "pattern_type": "best_focus_window",
+      "title": "Golden Study Hours Detected",
+      "description": "Your focus peaks between 9:00 AM and 11:30 AM. Creative and complex coding tasks are prioritised here for maximum efficiency.",
+      "confidence": 0.92,
+      "updated_at": "2026-06-25T04:19:33.685Z"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "msg-1",
+      "role": "system",
+      "content": "System initialized. Proactive Guardian agent connected and monitoring active threats.",
+      "created_at": "2026-06-27T03:19:33.685Z"
+    },
+    {
+      "id": "msg-2",
+      "role": "assistant",
+      "content": "Hello! I'm your DeadlineGuardian. I've analyzed your upcoming commitments and noted that your **CS101 Final Coding Project Submission** is due in less than 3 hours. I've auto-scheduled a study block in 30 minutes to ensure you push your code safely. Let's tackle it!",
+      "created_at": "2026-06-27T03:22:33.685Z"
+    }
+  ],
+  "autonomous_logs": [
+    {
+      "id": "log-auto-1782537750940",
+      "timestamp": "2026-06-27T05:22:30.940Z",
+      "title": "Urgent: CS101 Final Project Due in 87 Minutes",
+      "description": "Triggered an escalating priority reminder for your CS101 Final Coding Project submission.",
+      "action_type": "escalated_nudge",
+      "details": "ALERT: Your CS101 Final Coding Project (worth 25% of your grade) is due at 06:49 AM. You have 3 pending subtasks: 1) Complete README documentation, 2) Test responsive viewport breaks, and 3) Submit link on Canvas. Your active schedule block is currently running. Ensure you submit before the window closes!"
+    },
+    {
+      "id": "log-1782534237488",
+      "timestamp": "2026-06-27T04:23:57.488Z",
+      "title": "AI Schedule Re-Balanced",
+      "description": "Optimized calendar blocks for 6 pending tasks around calendar constraints.",
+      "action_type": "reschedule",
+      "details": "I have prioritized your urgent CS101 Final Project immediately to ensure you submit before your 6:49 AM deadline. Next, I scheduled your high-priority Frontend Interview Prep during your 'Golden Study Hours' (9:00 AM - 11:30 AM) for maximum focus, splitting the remaining study time into a secondary afternoon block to prevent burnout. Quick administrative tasks like paying bills are slotted right after lunch, and your Weekly Sync prep is perfectly timed to finish just minutes before your actual meeting. Finally, we wrap up the day with grocery shopping and meal prep during your evening downtime."
+    },
+    {
+      "id": "log-auto-1782534077011",
+      "timestamp": "2026-06-27T04:21:17.011Z",
+      "title": "Critical Deadline Alert: CS101 Project Due in 2.5 Hours",
+      "description": "Triggered an urgent workspace-prep nudge for your CS101 Final Coding Project as your remaining runway buffer has shrunk to just 29 minutes.",
+      "action_type": "escalated_nudge",
+      "details": "ALERT: Your 'CS101 Final Coding Project Submission' is due at 06:49 AM (in 2 hours, 28 minutes). With a 120-minute estimated completion time and three pending subtasks, your scheduled focus block starting at 04:49 AM (in 29 minutes) is your absolute last window to submit on time. Clear all distractions and prepare your IDE now."
+    },
+    {
+      "id": "log-1",
+      "timestamp": "2026-06-27T03:19:33.685Z",
+      "title": "Autonomous Study Block Auto-Scheduled",
+      "description": "Identified a high-priority threat: CS101 Final Coding Project submission is due in 3 hours with no planned schedule block. Auto-scheduled from 10:00 PM to 11:30 PM.",
+      "action_type": "reschedule",
+      "details": "Assigned CS101 study block in open slot preceding official deadline."
+    }
+  ]
+}

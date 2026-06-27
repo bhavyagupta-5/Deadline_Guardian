@@ -1,0 +1,6 @@
+{
+  "name": "DeadlineGuardian",
+  "description": "An AI-powered companion that proactively prioritizes, schedules, and acts to save you from missed deadlines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
